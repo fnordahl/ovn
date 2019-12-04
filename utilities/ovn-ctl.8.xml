@@ -137,6 +137,10 @@
     <p><code>--db-sb-cluster-remote-addr=<var>IP ADDRESS</var></code></p>
     <p><code>--db-sb-cluster-remote-port=<var>PORT NUMBER</var></code></p>
     <p><code>--db-sb-cluster-remote-proto=<var>PROTO (tcp/ssl)</var></code></p>
+    <p><code>--db-nb-cluster-local-conn<var>CONNECTION METHOD</var></code></p>
+    <p><code>--db-nb-cluster-remotes<var>CONNECTION METHODS</var></code></p>
+    <p><code>--db-sb-cluster-local-conn<var>CONNECTION METHOD</var></code></p>
+    <p><code>--db-sb-cluster-remotes<var>CONNECTION METHODS</var></code></p>
     <p><code>--db-ic-nb-cluster-local-addr=<var>IP ADDRESS</var></code></p>
     <p><code>--db-ic-nb-cluster-local-port=<var>PORT NUMBER</var></code></p>
     <p><code>--db-ic-nb-cluster-local-proto=<var>PROTO (tcp/ssl)</var></code></p>
@@ -262,6 +266,15 @@
       </code>
     </p>
 
+    <p>
+      Alternatively you can use OVSDB connection method strings
+      <code>
+        # ovn-ctl --db-nb-cluster-local-conn=tcp:x.x.x.x:6643 \
+                  --db-sb-cluster-local-conn=tcp:x.x.x.x:6644 \
+          start_northd
+      </code>
+    </p>
+
     <h3>Starting OVN ovsdb-servers and ovn-northd on the node with IP y.y.y.y and joining the cluster started at x.x.x.x</h3>
     <p>
       <code>
@@ -274,6 +287,17 @@
         --ovn-northd-nb-db=tcp:x.x.x.x:6641,tcp:y.y.y.y:6641,tcp:z.z.z.z:6641
         --ovn-northd-sb-db=tcp:x.x.x.x:6642,tcp:y.y.y.y:6642,tcp:z.z.z.z:6642
         start_northd
+      </code>
+    </p>
+
+    <p>
+      Alternatively you can use OVSDB connection method strings
+      <code>
+        # ovn-ctl --db-nb-cluster-local-conn=tcp:y.y.y.y:6643 \
+                  --db-sb-cluster-local-conn=tcp:y.y.y.y:6644 \
+                  --db-nb-cluster-remotes=tcp:x.x.x.x:6643,tcp:z.z.z.z:6643 \
+                  --db-sb-cluster-remotes=tcp:x.x.x.x:6643,tcp:z.z.z.z:6643 \
+          start_northd
       </code>
     </p>
 
@@ -290,6 +314,17 @@
           --db-sb-cluster-remote-addr=x.x.x.x
           --ovn-northd-nb-db=tcp:x.x.x.x:6641,tcp:y.y.y.y:6641,tcp:z.z.z.z:6641
           --ovn-northd-sb-db=tcp:x.x.x.x:6642,tcp:y.y.y.y:6642,tcp:z.z.z.z:6642
+          start_northd
+      </code>
+    </p>
+
+    <p>
+      Alternatively you can use OVSDB connection method strings
+      <code>
+        # ovn-ctl --db-nb-cluster-local-conn=tcp:z.z.z.z:6643 \
+                  --db-sb-cluster-local-conn=tcp:z.z.z.z:6644 \
+                  --db-nb-cluster-remotes=tcp:x.x.x.x:6643,tcp:y.y.y.y:6643 \
+                  --db-sb-cluster-remotes=tcp:x.x.x.x:6643,tcp:y.y.y.y:6643 \
           start_northd
       </code>
     </p>

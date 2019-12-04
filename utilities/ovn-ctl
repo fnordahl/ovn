@@ -150,9 +150,11 @@ start_ovsdb__() {
     local cluster_local_addr
     local cluster_local_port
     local cluster_local_proto
+    local cluster_local_conn
     local cluster_remote_addr
     local cluster_remote_port
     local cluster_remote_proto
+    local cluster_remotes
     local sync_from_proto
     local sync_from_addr
     local sync_from_port
@@ -175,9 +177,11 @@ start_ovsdb__() {
     eval cluster_local_addr=\$DB_${DB}_CLUSTER_LOCAL_ADDR
     eval cluster_local_port=\$DB_${DB}_CLUSTER_LOCAL_PORT
     eval cluster_local_proto=\$DB_${DB}_CLUSTER_LOCAL_PROTO
+    eval cluster_local_conn=\$DB_${DB}_CLUSTER_LOCAL_CONN
     eval cluster_remote_addr=\$DB_${DB}_CLUSTER_REMOTE_ADDR
     eval cluster_remote_port=\$DB_${DB}_CLUSTER_REMOTE_PORT
     eval cluster_remote_proto=\$DB_${DB}_CLUSTER_REMOTE_PROTO
+    eval cluster_remotes=\$DB_${DB}_CLUSTER_REMOTES
     eval sync_from_proto=\$DB_${DB}_SYNC_FROM_PROTO
     eval sync_from_addr=\$DB_${DB}_SYNC_FROM_ADDR
     eval sync_from_port=\$DB_${DB}_SYNC_FROM_PORT
@@ -207,7 +211,7 @@ start_ovsdb__() {
         return
     fi
 
-    if test ! -z "$cluster_local_addr"; then
+    if test ! -z "$cluster_local_addr" -o ! -z "$cluster_local_conn"; then
         mode=cluster
     elif test ! -z "$sync_from_addr"; then
         mode=active_passive
@@ -218,11 +222,19 @@ $sync_from_port" > $active_conf_file
     fi
 
     if test $mode = cluster; then
-        local local=$cluster_local_proto:$cluster_local_addr:\
+        if test ! -z "$cluster_local_conn"; then
+            local local=$cluster_local_conn
+        else
+            local local=$cluster_local_proto:$cluster_local_addr:\
 $cluster_local_port
-        local remote=$cluster_remote_proto:$cluster_remote_addr:\
+        fi
+        if test ! -z "$cluster_remotes"; then
+            local remote=$cluster_remotes
+        else
+            local remote=$cluster_remote_proto:$cluster_remote_addr:\
 $cluster_remote_port
-        if test -n "$cluster_remote_addr"; then
+        fi
+        if test -n "$cluster_remote_addr" -o -n "$cluster_remotes"; then
             join_cluster "$file" "$schema_name" "$local" "$remote"
         else
             create_cluster "$file" "$schema" "$local"
@@ -740,16 +752,20 @@ set_defaults () {
     DB_NB_CLUSTER_LOCAL_ADDR=""
     DB_NB_CLUSTER_LOCAL_PROTO="tcp"
     DB_NB_CLUSTER_LOCAL_PORT=6643
+    DB_NB_CLUSTER_LOCAL_CONN=""
     DB_NB_CLUSTER_REMOTE_ADDR=""
     DB_NB_CLUSTER_REMOTE_PROTO="tcp"
     DB_NB_CLUSTER_REMOTE_PORT=6643
+    DB_NB_CLUSTER_REMOTES=""
 
     DB_SB_CLUSTER_LOCAL_ADDR=""
     DB_SB_CLUSTER_LOCAL_PROTO="tcp"
+    DB_SB_CLUSTER_LOCAL_CONN=""
     DB_SB_CLUSTER_LOCAL_PORT=6644
     DB_SB_CLUSTER_REMOTE_ADDR=""
     DB_SB_CLUSTER_REMOTE_PROTO="tcp"
     DB_SB_CLUSTER_REMOTE_PORT=6644
+    DB_SB_CLUSTER_REMOTES=""
 
     DB_IC_NB_CLUSTER_LOCAL_ADDR=""
     DB_IC_NB_CLUSTER_LOCAL_PROTO="tcp"
@@ -941,24 +957,32 @@ File location options:
   (default: $DB_NB_CLUSTER_LOCAL_PORT)
   --db-nb-cluster-local-proto=PROTO OVN_Northbound cluster local db transport \
   (default: $DB_NB_CLUSTER_LOCAL_PROTO)
+  --db-nb-cluster-local-conn=CONN OVN_Northbound cluster local connection \
+  method (default: $DB_NB_CLUSTER_LOCAL_CONN)
   --db-nb-cluster-remote-addr=ADDR OVN_Northbound cluster remote address \
   (default: $DB_NB_CLUSTER_REMOTE_ADDR)
   --db-nb-cluster-remote-port=PORT OVN_Northbound cluster remote tcp port \
   (default: $DB_NB_CLUSTER_REMOTE_PORT)
   --db-nb-cluster-remote-proto=PROTO OVN_Northbound cluster remote db \
   transport (default: $DB_NB_CLUSTER_REMOTE_PROTO)
+  --db-nb-cluster-remotes=CONN_LIST Comma separated list of OVN_Northbound \
+  cluster remote connection methods (default: $DB_NB_CLUSTER_REMOTES)
   --db-sb-cluster-local-addr=ADDR OVN_Southbound cluster local address \
   (default: $DB_SB_CLUSTER_LOCAL_ADDR)
   --db-sb-cluster-local-port=PORT OVN_Southbound cluster local tcp port \
   (default: $DB_SB_CLUSTER_LOCAL_PORT)
   --db-sb-cluster-local-proto=PROTO OVN_Southbound cluster local db transport \
   (default: $DB_SB_CLUSTER_LOCAL_PROTO)
+  --db-sb-cluster-local-conn=CONN OVN_Southbound cluster local connection \
+  method (default: $DB_SB_CLUSTER_LOCAL_CONN)
   --db-sb-cluster-remote-addr=ADDR OVN_Southbound cluster remote address \
   (default: $DB_SB_CLUSTER_REMOTE_ADDR)
   --db-sb-cluster-remote-port=PORT OVN_Southbound cluster remote tcp port \
   (default: $DB_SB_CLUSTER_REMOTE_PORT)
   --db-sb-cluster-remote-proto=PROTO OVN_Southbound cluster remote db \
   transport (default: $DB_SB_CLUSTER_REMOTE_PROTO)
+  --db-sb-cluster-remotes=CONN_LIST Comma separated list of OVN_Southbound \
+  cluster remote connection methods (default: $DB_SB_CLUSTER_REMOTES)
   --ovn-northd-nb-db=NB DB address(es) (default: $OVN_NORTHD_NB_DB)
   --ovn-northd-sb-db=SB DB address(es) (default: $OVN_NORTHD_SB_DB)
   --db-nb-use-remote-in-db=yes|no OVN_Northbound db listen on target connection table (default: $DB_NB_USE_REMOTE_IN_DB)
