@@ -1,0 +1,32 @@
+#!/bin/sh -e
+
+# Lay out directories used for OVN configuration and persistent data
+for dir in etc/ovn var/lib/ovn var/log/ovn var/run/ovn; do
+    if [ ! -d $SNAP_COMMON/$dir ]; then
+        mkdir -p $SNAP_COMMON/$dir
+    fi
+done
+
+# Prepare access to the hosting systems Open vSwitch instance
+# NOTE end user must execute `snap connect ovn:openvswitch` for this to work
+ln -s /var/run/openvswitch $SNAP_COMMON/var/run/openvswitch
+
+# The `ovn-ctl` script does not have enough knobs for useful tailoring of
+# execution of the `ovn-northd` daemon.  Instead it provides a file to pass
+# arguments directly to the `ovn-northd` process.
+#
+# We fill the `args_northd` with necessary defaults and link to the file
+# `ovn-ctl` looks for.
+#
+# For other daemons the corrensponding args_* file is used to pass arguments to
+# `ovn-ctl`.
+cat << EOF > $SNAP_COMMON/args_northd
+--ovnnb-db=unix:$SNAP_COMMON/var/run/ovn/ovnnb_db.sock
+--ovnsb-db=unix:$SNAP_COMMON/var/run/ovn/ovnsb_db.sock
+EOF
+ln -s $SNAP_COMMON/args_northd $SNAP_COMMON/etc/ovn/ovn-northd-db-params.conf
+
+# We disable the data plane services by default as they require manual operator
+# configuration of the system hosting the snap
+snapctl stop --disable $SNAP_INSTANCE_NAME.controller
+snapctl stop --disable $SNAP_INSTANCE_NAME.controller-vtep

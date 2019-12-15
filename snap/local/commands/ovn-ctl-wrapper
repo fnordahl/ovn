@@ -1,0 +1,19 @@
+#!/bin/sh -e
+PROGRAM=`basename $0`
+ARGS_FILE=$SNAP_COMMON/args_$PROGRAM
+
+if [ x$PROGRAM = xnorthd ]; then
+    # By default the `ovn-ctl` script will manage `ovsdb-server` processes for
+    # the Northbound and Southbound databases together with the starting and
+    # stopping of `ovn-northd`.
+    #
+    # The snap defines separate services for the databases and thus we do not
+    # want their lifecycle to be managed together with `ovn-northd`.
+    args="--ovn-manage-ovsdb=no"
+fi
+
+if [ -r $ARGS_FILE ]; then
+    args="$args `cat $ARGS_FILE`"
+fi
+
+$SNAP/share/ovn/scripts/ovn-ctl $args start_$PROGRAM
