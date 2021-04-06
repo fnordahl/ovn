@@ -26,6 +26,8 @@ controller_ovn_controller_SOURCES = \
 	controller/pinctrl.h \
 	controller/patch.c \
 	controller/patch.h \
+	controller/plugging.c \
+	controller/plugging.h \
 	controller/ovn-controller.c \
 	controller/ovn-controller.h \
 	controller/physical.c \

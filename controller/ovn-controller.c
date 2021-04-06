@@ -54,6 +54,7 @@
 #include "patch.h"
 #include "physical.h"
 #include "pinctrl.h"
+#include "plugging.h"
 #include "openvswitch/poll-loop.h"
 #include "lib/bitmap.h"
 #include "lib/hash.h"
@@ -269,6 +270,11 @@ update_sb_monitors(struct ovsdb_idl *ovnsb_idl,
          */
         sbrec_logical_flow_add_clause_logical_dp_group(&lf, OVSDB_F_NE, NULL);
     }
+    /* Monitor unbound LP_VIF ports to consider representor port plugging */
+    struct uuid zero_uuid;
+    memset(&zero_uuid, 0, sizeof(zero_uuid));
+    sbrec_port_binding_add_clause_chassis(&pb, OVSDB_F_EQ, &zero_uuid);
+    sbrec_port_binding_add_clause_type(&pb, OVSDB_F_EQ, "\"\"");
 
 out:;
     unsigned int cond_seqnos[] = {
@@ -2572,6 +2578,7 @@ main(int argc, char *argv[])
     binding_init();
     patch_init();
     pinctrl_init();
+    plugging_init();
     lflow_init();
 
     /* Connect to OVS OVSDB instance. */
@@ -3050,6 +3057,10 @@ main(int argc, char *argv[])
                             ovsrec_open_vswitch_table_get(ovs_idl_loop.idl),
                             ovsrec_port_table_get(ovs_idl_loop.idl),
                             br_int, chassis, &runtime_data->local_datapaths);
+                        plugging_run(ovs_idl_txn,
+                            sbrec_port_binding_table_get(ovnsb_idl_loop.idl),
+                            ovsrec_port_table_get(ovs_idl_loop.idl),
+                            br_int, chassis);
                         pinctrl_run(ovnsb_idl_txn,
                                     sbrec_datapath_binding_by_key,
                                     sbrec_port_binding_by_datapath,
@@ -3268,6 +3279,7 @@ loop_done:
     ofctrl_destroy();
     pinctrl_destroy();
     patch_destroy();
+    plugging_destroy();
 
     ovsdb_idl_loop_destroy(&ovs_idl_loop);
     ovsdb_idl_loop_destroy(&ovnsb_idl_loop);
