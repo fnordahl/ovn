@@ -120,3 +120,12 @@ mcgroup_lookup_by_dp_name(
 
     return retval;
 }
+
+bool
+lport_can_bind_on_this_chassis(const struct sbrec_chassis *chassis_rec,
+                               const char *requested_chassis)
+{
+    return !requested_chassis || !requested_chassis[0]
+           || !strcmp(requested_chassis, chassis_rec->name)
+           || !strcmp(requested_chassis, chassis_rec->hostname);
+}

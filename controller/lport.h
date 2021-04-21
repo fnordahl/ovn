@@ -54,5 +54,7 @@ lport_is_chassis_resident(struct ovsdb_idl_index *sbrec_port_binding_by_name,
                           const struct sbrec_chassis *chassis,
                           const struct sset *active_tunnels,
                           const char *port_name);
+bool lport_can_bind_on_this_chassis(const struct sbrec_chassis *,
+                                    const char *);
 
 #endif /* controller/lport.h */

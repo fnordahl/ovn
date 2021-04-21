@@ -1081,15 +1081,6 @@ is_binding_lport_this_chassis(struct binding_lport *b_lport,
             b_lport->pb->chassis == chassis);
 }
 
-static bool
-can_bind_on_this_chassis(const struct sbrec_chassis *chassis_rec,
-                         const char *requested_chassis)
-{
-    return !requested_chassis || !requested_chassis[0]
-           || !strcmp(requested_chassis, chassis_rec->name)
-           || !strcmp(requested_chassis, chassis_rec->hostname);
-}
-
 /* Returns 'true' if the 'lbinding' has binding lports of type LP_CONTAINER,
  * 'false' otherwise. */
 static bool
@@ -1186,8 +1177,8 @@ consider_vif_lport(const struct sbrec_port_binding *pb,
                    struct hmap *qos_map)
 {
     const char *vif_chassis = smap_get(&pb->options, "requested-chassis");
-    bool can_bind = can_bind_on_this_chassis(b_ctx_in->chassis_rec,
-                                             vif_chassis);
+    bool can_bind = lport_can_bind_on_this_chassis(b_ctx_in->chassis_rec,
+                                                   vif_chassis);
 
     if (!lbinding) {
         lbinding = local_binding_find(&b_ctx_out->lbinding_data->bindings,
@@ -1278,8 +1269,8 @@ consider_container_lport(const struct sbrec_port_binding *pb,
     ovs_assert(parent_b_lport && parent_b_lport->pb);
     const char *vif_chassis = smap_get(&parent_b_lport->pb->options,
                                        "requested-chassis");
-    bool can_bind = can_bind_on_this_chassis(b_ctx_in->chassis_rec,
-                                             vif_chassis);
+    bool can_bind = lport_can_bind_on_this_chassis(b_ctx_in->chassis_rec,
+                                                   vif_chassis);
 
     return consider_vif_lport_(pb, can_bind, vif_chassis, b_ctx_in, b_ctx_out,
                                container_b_lport, qos_map);
