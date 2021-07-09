@@ -34,7 +34,11 @@ lib_libovn_la_SOURCES = \
 	lib/lb.h \
 	lib/stopwatch-names.h \
 	lib/ovsport.h \
-	lib/ovsport.c
+	lib/ovsport.c \
+	lib/plug-provider.h \
+	lib/plug.h \
+	lib/plug.c \
+	lib/plug-test.c
 nodist_lib_libovn_la_SOURCES = \
 	lib/ovn-dirs.c \
 	lib/ovn-nb-idl.c \
