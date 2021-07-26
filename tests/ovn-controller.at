@@ -692,3 +692,34 @@ AT_CHECK([as hv1 ovs-ofctl dump-flows br-int | grep controller | grep userdata=0
 OVN_CLEANUP([hv1])
 AT_CLEANUP
 ])
+
+OVN_FOR_EACH_NORTHD([
+AT_SETUP([ovn-controller - plugging])
+AT_KEYWORDS([plugging])
+
+ovn_start
+
+net_add n1
+sim_add hv1
+ovs-vsctl add-br br-phys
+ovn_attach n1 br-phys 192.168.0.1
+
+check ovn-nbctl ls-add lsw0
+check ovn-nbctl lsp-add lsw0 lsp1
+check ovn-nbctl lsp-set-addresses lsp1 "f0:00:00:00:00:01 172.16.0.100"
+check ovn-nbctl --wait=sb set Logical_Switch_Port lsp1 \
+    options:requested-chassis=hv1 \
+    options:plug-type=dummy \
+    options:plug-mtu-request=42
+
+wait_column "true" Port_Binding up logical_port=lsp1
+
+as hv1
+
+AT_CHECK([as hv1 ovs-vsctl find interface name=lsp1 options:plug-dummy-option=value | grep -q "options.*value"])
+AT_CHECK([as hv1 ovs-vsctl find interface name=lsp1 mtu_request=42 | grep -q "mtu_request.*42"])
+
+OVN_CLEANUP([hv1])
+AT_CLEANUP
+])
+

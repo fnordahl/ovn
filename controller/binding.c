@@ -23,6 +23,7 @@
 #include "lib/netdev.h"
 #include "lib/vswitch-idl.h"
 #include "openvswitch/hmap.h"
+#include "openvswitch/uuid.h"
 #include "openvswitch/vlog.h"
 
 /* OVN includes. */
@@ -35,7 +36,9 @@
 #include "local_data.h"
 #include "lport.h"
 #include "ovn-controller.h"
+#include "ovsport.h"
 #include "patch.h"
+#include "plug.h"
 
 VLOG_DEFINE_THIS_MODULE(binding);
 
@@ -44,6 +47,8 @@ VLOG_DEFINE_THIS_MODULE(binding);
  * flows have been installed.
  */
 #define OVN_INSTALLED_EXT_ID "ovn-installed"
+
+#define OVN_PLUGGED_EXT_ID "ovn-plugged"
 
 #define OVN_QOS_TYPE "linux-htb"
 
@@ -71,10 +76,13 @@ binding_register_ovs_idl(struct ovsdb_idl *ovs_idl)
 
     ovsdb_idl_add_table(ovs_idl, &ovsrec_table_interface);
     ovsdb_idl_track_add_column(ovs_idl, &ovsrec_interface_col_name);
+    ovsdb_idl_track_add_column(ovs_idl, &ovsrec_interface_col_type);
     ovsdb_idl_track_add_column(ovs_idl, &ovsrec_interface_col_external_ids);
     ovsdb_idl_track_add_column(ovs_idl, &ovsrec_interface_col_bfd);
     ovsdb_idl_track_add_column(ovs_idl, &ovsrec_interface_col_bfd_status);
     ovsdb_idl_track_add_column(ovs_idl, &ovsrec_interface_col_status);
+    ovsdb_idl_track_add_column(ovs_idl, &ovsrec_interface_col_options);
+    ovsdb_idl_track_add_column(ovs_idl, &ovsrec_interface_col_mtu_request);
 
     ovsdb_idl_add_table(ovs_idl, &ovsrec_table_qos);
     ovsdb_idl_add_column(ovs_idl, &ovsrec_qos_col_type);
@@ -1047,12 +1055,33 @@ is_binding_lport_this_chassis(struct binding_lport *b_lport,
 }
 
 static bool
+chassis_uses_dpdk(const struct ovsrec_open_vswitch_table *ovs_table,
+                  const struct ovsrec_bridge *br_int)
+{
+    const struct ovsrec_open_vswitch *cfg;
+
+    cfg = ovsrec_open_vswitch_table_first(ovs_table);
+
+    return (cfg && cfg->dpdk_initialized &&
+            !strcmp(br_int->datapath_type, "netdev"));
+}
+
+static bool
 can_bind_on_this_chassis(const struct sbrec_chassis *chassis_rec,
                          const char *requested_chassis)
 {
     return !requested_chassis || !requested_chassis[0]
            || !strcmp(requested_chassis, chassis_rec->name)
            || !strcmp(requested_chassis, chassis_rec->hostname);
+}
+
+static bool
+can_plug_on_this_chassis(const struct sbrec_chassis *chassis_rec,
+                         const struct sbrec_port_binding *pb)
+{
+    return (pb && chassis_rec && pb->plugged_by
+            && uuid_equals(&chassis_rec->header_.uuid,
+                           &pb->plugged_by->header_.uuid));
 }
 
 /* Returns 'true' if the 'lbinding' has binding lports of type LP_CONTAINER,
@@ -1086,6 +1115,51 @@ release_binding_lport(const struct sbrec_chassis *chassis_rec,
     }
 
     return true;
+}
+
+static void
+consider_unplug_lport(const struct sbrec_port_binding *pb,
+                      struct binding_ctx_in *b_ctx_in,
+                      struct local_binding *lbinding)
+{
+    const char *plug_type = NULL;
+    if (lbinding && lbinding->iface) {
+        plug_type = smap_get(&lbinding->iface->external_ids,
+                             OVN_PLUGGED_EXT_ID);
+    }
+
+    if (plug_type) {
+        const struct ovsrec_port *port = ovsport_lookup_by_interface(
+                b_ctx_in->ovsrec_port_by_interfaces,
+                (struct ovsrec_interface *) lbinding->iface);
+        if (port) {
+            struct plug *plug;
+            if (plug_open(plug_type, &plug)) {
+                static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 1);
+                VLOG_WARN_RL(&rl,
+                             "Unable to open plug provider for "
+                             "plug-type: '%s' lport %s",
+                             plug_type, pb->logical_port);
+                return;
+            }
+            const struct plug_port_ctx_in plug_ctx_in = {
+                    .op_type = PLUG_OP_REMOVE,
+                    .use_dpdk = chassis_uses_dpdk(b_ctx_in->ovs_table,
+                                                  b_ctx_in->br_int),
+                    .lport_name = (const char *)pb->logical_port,
+                    .lport_options = (const struct smap *)&pb->options,
+                    .iface_name = lbinding->iface->name,
+                    .iface_type = lbinding->iface->type,
+                    .iface_options = &lbinding->iface->options,
+            };
+            plug_port_prepare(plug, &plug_ctx_in, NULL);
+            VLOG_INFO("Unplugging port %s from %s for lport %s on this "
+                      "chassis.",
+                      port->name, b_ctx_in->br_int->name, pb->logical_port);
+            ovsport_remove(b_ctx_in->br_int, port);
+            plug_port_finish(plug, &plug_ctx_in, NULL);
+        }
+    }
 }
 
 static bool
@@ -1138,13 +1212,182 @@ consider_vif_lport_(const struct sbrec_port_binding *pb,
     if (pb->chassis == b_ctx_in->chassis_rec) {
         /* Release the lport if there is no lbinding. */
         if (!lbinding_set || !can_bind) {
-            return release_lport(pb, !b_ctx_in->ovnsb_idl_txn,
-                                 b_ctx_out->tracked_dp_bindings,
-                                 b_ctx_out->if_mgr);
+            bool handled = release_lport(pb, !b_ctx_in->ovnsb_idl_txn,
+                                         b_ctx_out->tracked_dp_bindings,
+                                         b_ctx_out->if_mgr);
+            if (handled && b_lport && b_lport->lbinding) {
+                consider_unplug_lport(pb, b_ctx_in, b_lport->lbinding);
+            }
+            return handled;
         }
     }
 
     return true;
+}
+
+static int64_t
+get_plug_mtu_request(const struct smap *lport_options)
+{
+    return smap_get_int(lport_options, "plug-mtu-request", 0);
+}
+
+static bool
+consider_plug_lport_create__(const struct plug *plug,
+                             const struct smap *iface_external_ids,
+                             const struct sbrec_port_binding *pb,
+                             struct binding_ctx_in *b_ctx_in)
+{
+    bool ret = true;
+    struct plug_port_ctx_in plug_ctx_in = {
+            .op_type = PLUG_OP_CREATE,
+            .use_dpdk = chassis_uses_dpdk(b_ctx_in->ovs_table,
+                                          b_ctx_in->br_int),
+            .lport_name = (const char *)pb->logical_port,
+            .lport_options = (const struct smap *)&pb->options,
+    };
+    struct plug_port_ctx_out plug_ctx_out;
+
+    if (!plug_port_prepare(plug, &plug_ctx_in, &plug_ctx_out)) {
+        static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 1);
+        VLOG_INFO_RL(&rl,
+                     "Not plugging lport %s on direction from plugging "
+                     "library.",
+                     pb->logical_port);
+        ret = false;
+        goto out;
+    }
+
+    VLOG_INFO("Plugging port %s into %s for lport %s on this "
+              "chassis.",
+              plug_ctx_out.name, b_ctx_in->br_int->name,
+              pb->logical_port);
+    ovsport_create(b_ctx_in->ovs_idl_txn, b_ctx_in->br_int,
+                   plug_ctx_out.name, plug_ctx_out.type,
+                   NULL, iface_external_ids,
+                   plug_ctx_out.iface_options,
+                   get_plug_mtu_request(&pb->options));
+
+    plug_port_finish(plug, &plug_ctx_in, &plug_ctx_out);
+
+out:
+    plug_port_ctx_destroy(plug, &plug_ctx_in, &plug_ctx_out);
+
+    return ret;
+}
+
+static bool
+consider_plug_lport_update__(const struct plug *plug,
+                             const struct smap *iface_external_ids,
+                             const struct sbrec_port_binding *pb,
+                             struct binding_ctx_in *b_ctx_in,
+                             struct local_binding *lbinding)
+{
+    bool ret = true;
+    struct plug_port_ctx_in plug_ctx_in = {
+            .op_type = PLUG_OP_CREATE,
+            .use_dpdk = chassis_uses_dpdk(b_ctx_in->ovs_table,
+                                          b_ctx_in->br_int),
+            .lport_name = (const char *)pb->logical_port,
+            .lport_options = (const struct smap *)&pb->options,
+            .iface_name = lbinding->iface->name,
+            .iface_type = lbinding->iface->type,
+            .iface_options = &lbinding->iface->options,
+    };
+    struct plug_port_ctx_out plug_ctx_out;
+
+    if (!plug_port_prepare(plug, &plug_ctx_in, &plug_ctx_out)) {
+        static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 1);
+        VLOG_INFO_RL(&rl,
+                     "Not updating lport %s on direction from plugging "
+                     "library.",
+                     pb->logical_port);
+        ret = false;
+        goto out;
+    }
+
+    if (strcmp(lbinding->iface->name, plug_ctx_out.name)) {
+        VLOG_WARN("Attempt of incompatible change to existing "
+                  "port detected, please recreate port: %s",
+                   pb->logical_port);
+        ret = false;
+        goto out;
+    }
+    VLOG_DBG("updating iface for: %s", pb->logical_port);
+    ovsport_update_iface(lbinding->iface, plug_ctx_out.type,
+                         iface_external_ids,
+                         NULL,
+                         plug_ctx_out.iface_options,
+                         plug_class_get_maintained_iface_options(
+                                 plug),
+                         get_plug_mtu_request(&pb->options));
+
+    plug_port_finish(plug, &plug_ctx_in, &plug_ctx_out);
+out:
+    plug_port_ctx_destroy(plug, &plug_ctx_in, &plug_ctx_out);
+
+    return ret;
+}
+
+static bool
+consider_plug_lport(const struct sbrec_port_binding *pb,
+                    struct binding_ctx_in *b_ctx_in,
+                    struct local_binding *lbinding)
+{
+    if (!b_ctx_in->chassis_rec || !b_ctx_in->br_int || !b_ctx_in->ovs_idl_txn)
+    {
+        return false;
+    }
+    bool ret = true;
+
+    if (can_plug_on_this_chassis(b_ctx_in->chassis_rec, pb)) {
+        static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 1);
+        const char *plug_type = smap_get(&pb->options, "plug-type");
+        if (!plug_type) {
+            /* This should never happen, but better safe than sorry */
+            VLOG_WARN_RL(&rl,
+                         "Possible database inconsistency detected: "
+                         "Port_Binding->plugged_by points at this chassis, "
+                         "but Port_Binding->options:plug-type not set. "
+                         "lport %s",
+                         pb->logical_port);
+            return false;
+        }
+
+        struct plug *plug;
+        if (plug_open(plug_type, &plug)) {
+            VLOG_WARN_RL(&rl,
+                         "Unable to open plug provider for plug-type: '%s' "
+                         "lport %s",
+                         plug_type, pb->logical_port);
+            return false;
+        }
+        const struct smap iface_external_ids = SMAP_CONST2(
+                &iface_external_ids,
+                OVN_PLUGGED_EXT_ID, plug_type,
+                "iface-id", pb->logical_port);
+        if (lbinding && lbinding->iface) {
+            if (!smap_get(&lbinding->iface->external_ids,
+                          OVN_PLUGGED_EXT_ID))
+            {
+                VLOG_WARN_RL(&rl,
+                             "CMS requested plugging of lport %s, but a port "
+                             "that is not maintained by OVN already exsist "
+                             "in local vSwitch: "UUID_FMT,
+                             pb->logical_port,
+                             UUID_ARGS(&lbinding->iface->header_.uuid));
+                ret = false;
+                goto out;
+            }
+            ret = consider_plug_lport_update__(plug, &iface_external_ids, pb,
+                                               b_ctx_in, lbinding);
+        } else {
+            ret = consider_plug_lport_create__(plug, &iface_external_ids, pb,
+                                               b_ctx_in);
+        }
+    }
+
+out:
+    return ret;
 }
 
 static bool
@@ -1170,6 +1413,11 @@ consider_vif_lport(const struct sbrec_port_binding *pb,
         b_lport = local_binding_add_lport(binding_lports, lbinding, pb, LP_VIF);
     }
 
+    /* Consider if we should create or update local port/interface record for
+     * this lport.  Note that a newly created port/interface will get its flows
+     * installed on the next loop iteration as we won't wait for OVS vSwitchd
+     * to configure and assign a ofport to the interface. */
+    consider_plug_lport(pb, b_ctx_in, lbinding);
     return consider_vif_lport_(pb, can_bind, vif_chassis, b_ctx_in,
                                b_ctx_out, b_lport, qos_map);
 }
@@ -1562,6 +1810,10 @@ binding_run(struct binding_ctx_in *b_ctx_in, struct binding_ctx_out *b_ctx_out)
         struct ovs_list list_node;
         const struct sbrec_port_binding *pb;
     };
+
+    /* For any open plug provider instances, perform periodic non-blocking
+     * maintenance */
+    plug_run_instances();
 
     /* Run through each binding record to see if it is resident on this
      * chassis and update the binding accordingly.  This includes both
@@ -2097,8 +2349,11 @@ handle_deleted_vif_lport(const struct sbrec_port_binding *pb,
         lbinding = b_lport->lbinding;
         bound = is_binding_lport_this_chassis(b_lport, b_ctx_in->chassis_rec);
 
-         /* Remove b_lport from local_binding. */
-         binding_lport_delete(binding_lports, b_lport);
+        if (b_lport->lbinding) {
+            consider_unplug_lport(pb, b_ctx_in, b_lport->lbinding);
+        }
+        /* Remove b_lport from local_binding. */
+        binding_lport_delete(binding_lports, b_lport);
     }
 
     if (bound && lbinding && lport_type == LP_VIF) {
@@ -2676,6 +2931,10 @@ local_binding_handle_stale_binding_lports(struct local_binding *lbinding,
             handled = release_binding_lport(b_ctx_in->chassis_rec, b_lport,
                                             !b_ctx_in->ovnsb_idl_txn,
                                             b_ctx_out);
+            if (handled && b_lport && b_lport->lbinding) {
+                consider_unplug_lport(b_lport->pb, b_ctx_in,
+                                      b_lport->lbinding);
+            }
             binding_lport_delete(&b_ctx_out->lbinding_data->lports,
                                  b_lport);
         }
