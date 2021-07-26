@@ -55,6 +55,7 @@
 #include "lib/ovn-sb-idl.h"
 #include "lib/ovn-util.h"
 #include "patch.h"
+#include "plug.h"
 #include "physical.h"
 #include "pinctrl.h"
 #include "openvswitch/poll-loop.h"
@@ -229,6 +230,9 @@ update_sb_monitors(struct ovsdb_idl *ovnsb_idl,
          * us but should not be.  That way, we can clear their chassis
          * assignments. */
         sbrec_port_binding_add_clause_chassis(&pb, OVSDB_F_EQ,
+                                              &chassis->header_.uuid);
+
+        sbrec_port_binding_add_clause_plugged_by(&pb, OVSDB_F_EQ,
                                               &chassis->header_.uuid);
 
         /* Ensure that we find out about l2gateway and l3gateway ports that
@@ -3881,6 +3885,7 @@ loop_done:
     pinctrl_destroy();
     patch_destroy();
     if_status_mgr_destroy(if_mgr);
+    plug_destroy_all();
 
     ovsdb_idl_loop_destroy(&ovs_idl_loop);
     ovsdb_idl_loop_destroy(&ovnsb_idl_loop);
