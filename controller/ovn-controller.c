@@ -55,7 +55,9 @@
 #include "lib/mcast-group-index.h"
 #include "lib/ovn-sb-idl.h"
 #include "lib/ovn-util.h"
+#include "lib/plug-dummy.h"
 #include "patch.h"
+#include "plug.h"
 #include "physical.h"
 #include "pinctrl.h"
 #include "openvswitch/poll-loop.h"
@@ -1242,6 +1244,11 @@ init_binding_ctx(struct engine_node *node,
                 engine_get_input("SB_port_binding", node),
                 "datapath");
 
+    struct ovsdb_idl_index *ovsrec_port_by_interfaces =
+        engine_ovsdb_node_get_index(
+                engine_get_input("OVS_port", node),
+                "interfaces");
+
     struct controller_engine_ctx *ctrl_ctx = engine_get_context()->client_ctx;
 
     b_ctx_in->ovnsb_idl_txn = engine_get_context()->ovnsb_idl_txn;
@@ -1249,6 +1256,7 @@ init_binding_ctx(struct engine_node *node,
     b_ctx_in->sbrec_datapath_binding_by_key = sbrec_datapath_binding_by_key;
     b_ctx_in->sbrec_port_binding_by_datapath = sbrec_port_binding_by_datapath;
     b_ctx_in->sbrec_port_binding_by_name = sbrec_port_binding_by_name;
+    b_ctx_in->ovsrec_port_by_interfaces = ovsrec_port_by_interfaces;
     b_ctx_in->port_table = port_table;
     b_ctx_in->iface_table = iface_table;
     b_ctx_in->qos_table = qos_table;
@@ -3102,11 +3110,17 @@ main(int argc, char *argv[])
     patch_init();
     pinctrl_init();
     lflow_init();
+    plug_initialize();
 
     /* Connect to OVS OVSDB instance. */
     struct ovsdb_idl_loop ovs_idl_loop = OVSDB_IDL_LOOP_INITIALIZER(
         ovsdb_idl_create(ovs_remote, &ovsrec_idl_class, false, true));
     ctrl_register_ovs_idl(ovs_idl_loop.idl);
+
+    struct ovsdb_idl_index *ovsrec_port_by_interfaces
+        = ovsdb_idl_index_create1(ovs_idl_loop.idl,
+                                  &ovsrec_port_col_interfaces);
+
     ovsdb_idl_get_initial_snapshot(ovs_idl_loop.idl);
 
     /* Configure OVN SB database. */
@@ -3226,6 +3240,7 @@ main(int argc, char *argv[])
     ENGINE_NODE(flow_output, "flow_output");
     ENGINE_NODE(addr_sets, "addr_sets");
     ENGINE_NODE_WITH_CLEAR_TRACK_DATA(port_groups, "port_groups");
+    ENGINE_NODE_NO_DATA(plug_provider, "plug_provider");
 
 #define SB_NODE(NAME, NAME_STR) ENGINE_NODE_SB(NAME, NAME_STR);
     SB_NODES
@@ -3320,6 +3335,8 @@ main(int argc, char *argv[])
     engine_add_input(&en_ct_zones, &en_runtime_data,
                      ct_zones_runtime_data_handler);
 
+    engine_add_input(&en_runtime_data, &en_plug_provider, NULL);
+
     engine_add_input(&en_runtime_data, &en_ofctrl_is_connected, NULL);
 
     engine_add_input(&en_runtime_data, &en_ovs_open_vswitch, NULL);
@@ -3370,6 +3387,8 @@ main(int argc, char *argv[])
                                 sbrec_port_binding_by_datapath);
     engine_ovsdb_node_add_index(&en_sb_datapath_binding, "key",
                                 sbrec_datapath_binding_by_key);
+    engine_ovsdb_node_add_index(&en_ovs_port, "interfaces",
+                                ovsrec_port_by_interfaces);
 
     struct ed_type_lflow_output *lflow_output_data =
         engine_get_internal_data(&en_lflow_output);
@@ -3897,6 +3916,7 @@ loop_done:
     pinctrl_destroy();
     patch_destroy();
     if_status_mgr_destroy(if_mgr);
+    plug_destroy_all();
 
     ovsdb_idl_loop_destroy(&ovs_idl_loop);
     ovsdb_idl_loop_destroy(&ovnsb_idl_loop);
@@ -3916,6 +3936,7 @@ parse_options(int argc, char *argv[])
         VLOG_OPTION_ENUMS,
         OVN_DAEMON_OPTION_ENUMS,
         SSL_OPTION_ENUMS,
+        OPT_ENABLE_DUMMY_PLUG,
     };
 
     static struct option long_options[] = {
@@ -3926,6 +3947,7 @@ parse_options(int argc, char *argv[])
         STREAM_SSL_LONG_OPTIONS,
         {"peer-ca-cert", required_argument, NULL, OPT_PEER_CA_CERT},
         {"bootstrap-ca-cert", required_argument, NULL, OPT_BOOTSTRAP_CA_CERT},
+        {"enable-dummy-plug", no_argument, NULL, OPT_ENABLE_DUMMY_PLUG},
         {NULL, 0, NULL, 0}
     };
     char *short_options = ovs_cmdl_long_options_to_short_options(long_options);
@@ -3969,6 +3991,10 @@ parse_options(int argc, char *argv[])
 
         case OPT_BOOTSTRAP_CA_CERT:
             stream_ssl_set_ca_cert_file(optarg, true);
+            break;
+
+        case OPT_ENABLE_DUMMY_PLUG:
+            plug_dummy_enable();
             break;
 
         case '?':

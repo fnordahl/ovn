@@ -306,6 +306,13 @@ void engine_ovsdb_node_add_index(struct engine_node *, const char *name,
     ENGINE_NODE_CUSTOM_DATA(NAME, NAME_STR) \
     en_##NAME.clear_tracked_data = en_##NAME##_clear_tracked_data;
 
+#define ENGINE_NODE_NO_DATA(NAME, NAME_STR) \
+    static void * (*en_##NAME##_init)(struct engine_node *, \
+                                      struct engine_arg *) = NULL; \
+    static void (*en_##NAME##_cleanup)(void *) = NULL; \
+    static bool (*en_##NAME##_is_valid)(struct engine_node *node) = NULL; \
+    ENGINE_NODE_DEF(NAME, NAME_STR)
+
 #define ENGINE_NODE(NAME, NAME_STR) \
     static bool (*en_##NAME##_is_valid)(struct engine_node *node) = NULL; \
     ENGINE_NODE_DEF(NAME, NAME_STR)
