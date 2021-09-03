@@ -163,6 +163,11 @@ Building with in-tree plugging providers
 Plugging providers hosted in the OVN repository living under
 `lib/plug_providers`:
 
+* :doc:`representor <plug-representor>`
+
+  - Representor port lookup making use of the Linux kernel devlink-port
+    infrastructure.
+
 To enable them, provide the `--enable-plug-providers` command line option to
 the configure script when building OVN.
 

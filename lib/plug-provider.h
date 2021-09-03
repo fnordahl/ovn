@@ -87,9 +87,13 @@ struct plug_class {
 };
 
 extern const struct plug_class plug_dummy_class;
+#ifdef ENABLE_PLUG
+/* in-tree plug classes */
+extern const struct plug_class plug_representor;
+#endif /* ENABLE_PLUG */
 #ifdef HAVE_PLUG_PROVIDER
 extern const struct plug_class *plug_provider_classes[];
-#endif
+#endif /* HAVE_PLUG_PROVIDER */
 
 #ifdef  __cplusplus
 }

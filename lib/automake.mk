@@ -43,6 +43,17 @@ lib_libovn_la_SOURCES = \
 	lib/plug.c \
 	lib/plug-dummy.h \
 	lib/plug-dummy.c
+
+# in-tree plug providers
+if ENABLE_PLUG
+if LINUX
+lib_libovn_la_SOURCES += \
+	lib/plug_providers/representor/netlink-devlink.h \
+	lib/plug_providers/representor/netlink-devlink.c \
+	lib/plug_providers/representor/plug-representor.c
+endif
+endif
+
 nodist_lib_libovn_la_SOURCES = \
 	lib/ovn-dirs.c \
 	lib/ovn-nb-idl.c \

@@ -29,6 +29,7 @@ DOC_SOURCE = \
 	Documentation/topics/role-based-access-control.rst \
 	Documentation/topics/debugging-ddlog.rst \
 	Documentation/topics/plug_providers/plug-providers.rst \
+	Documentation/topics/plug_providers/plug-representor.rst \
 	Documentation/howto/index.rst \
 	Documentation/howto/docker.rst \
 	Documentation/howto/firewalld.rst \

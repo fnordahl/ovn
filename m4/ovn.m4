@@ -592,3 +592,29 @@ AC_DEFUN([OVS_CHECK_DDLOG_FAST_BUILD],
    if $ddlog_fast_build; then
       DDLOG_EXTRA_RUSTFLAGS="-C opt-level=z"
    fi])
+
+dnl Checks for Netlink support.
+AC_DEFUN([OVS_CHECK_NETLINK],
+  [AC_CHECK_HEADER([linux/netlink.h],
+                   [HAVE_NETLINK=yes],
+                   [HAVE_NETLINK=no],
+                   [#include <sys/socket.h>
+   ])
+   AM_CONDITIONAL([HAVE_NETLINK], [test "$HAVE_NETLINK" = yes])
+   if test "$HAVE_NETLINK" = yes; then
+      AC_DEFINE([HAVE_NETLINK], [1],
+                [Define to 1 if Netlink protocol is available.])
+   fi])
+
+dnl OVS_CHECK_LINUX_NETLINK
+dnl
+dnl Configure Linux netlink compat.
+AC_DEFUN([OVS_CHECK_LINUX_NETLINK], [
+  AC_COMPILE_IFELSE([
+    AC_LANG_PROGRAM([#include <linux/netlink.h>], [
+        struct nla_bitfield32 x =  { 0 };
+    ])],
+    [AC_DEFINE([HAVE_NLA_BITFIELD32], [1],
+    [Define to 1 if struct nla_bitfield32 is available.])])
+])
+

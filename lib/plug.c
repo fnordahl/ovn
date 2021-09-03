@@ -32,6 +32,7 @@ VLOG_DEFINE_THIS_MODULE(plug);
 
 #ifdef ENABLE_PLUG
 static const struct plug_class *base_plug_classes[] = {
+    &plug_representor,
 };
 #endif
 

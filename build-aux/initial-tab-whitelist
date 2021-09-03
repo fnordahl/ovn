@@ -3,6 +3,7 @@
 \.mk$
 \.png$
 \.sln$
+^include/linux/
 ^ovs/
 ^third-party/
 ^xenserver/
