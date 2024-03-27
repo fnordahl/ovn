@@ -344,6 +344,22 @@ extract_lrp_networks(const struct nbrec_logical_router_port *lrp,
         }
     }
 
+    for (int i = 0; i < lrp->n_ipv6_prefix; i++) {
+        struct in6_addr ip6;
+        unsigned int plen;
+        char *error;
+
+        error = ipv6_parse_cidr(lrp->ipv6_prefix[i], &ip6, &plen);
+        if (!error) {
+            add_ipv6_netaddr(laddrs, ip6, plen);
+        } else {
+            static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 1);
+            VLOG_INFO_RL(&rl, "invalid syntax '%s' in ipv6_prefix",
+                         lrp->networks[i]);
+            free(error);
+        }
+    }
+
     /* Always add the IPv6 link local address. */
     struct in6_addr lla;
     in6_generate_lla(laddrs->ea, &lla);
