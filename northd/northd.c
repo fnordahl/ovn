@@ -2944,7 +2944,7 @@ ovn_update_ipv6_prefix(struct hmap *lr_ports)
     HMAP_FOR_EACH (op, key_node, lr_ports) {
         ovs_assert(op->nbrp);
 
-        if (!smap_get_bool(&op->nbrp->options, "prefix", false)) {
+        if (!smap_get_bool(&op->nbrp->options, "prefix_delegation", false)) {
             continue;
         }
 
@@ -2955,6 +2955,14 @@ ovn_update_ipv6_prefix(struct hmap *lr_ports)
         if (!ipv6_pd_list ||
             !ovs_scan(ipv6_pd_list, "%u:%s", &aid, prefix)) {
             continue;
+        }
+
+        if (op->od && op->od->nbr) {
+            for (size_t i = 0; i < op->od->nbr->n_ports; i++) {
+            }
+            VLOG_INFO("HELLO lrp %s is on %s which has %ld ports.",
+                      op->nbrp->name, op->od->nbr->name,
+                      op->od->nbr->n_ports);
         }
 
         const char *prefix_ptr = prefix;
