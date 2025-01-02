@@ -1336,10 +1336,12 @@ static bool
 fill_ipv6_prefix_state(struct ovsdb_idl_txn *ovnsb_idl_txn,
                        const struct local_datapath *ld,
                        struct eth_addr ea, struct in6_addr ipv6_addr,
-                       int64_t tunnel_key, int64_t dp_tunnel_key)
+                       int64_t tunnel_key, int64_t dp_tunnel_key,
+                       const struct sbrec_port_binding *gwp)
     OVS_REQUIRES(pinctrl_mutex)
 {
     bool changed = false;
+    size_t n_ipv6_prefix_ports = 0;
 
     for (size_t i = 0; i < ld->n_peer_ports; i++) {
         const struct sbrec_port_binding *pb = ld->peer_ports[i].local;
@@ -1349,75 +1351,75 @@ fill_ipv6_prefix_state(struct ovsdb_idl_txn *ovnsb_idl_txn,
             free(shash_find_and_delete(&ipv6_prefixd, pb->logical_port));
             continue;
         }
-
-        /* To reach this point, the port binding must be a logical router
-         * port. LRPs are configured with a single MAC that is always non-NULL.
-         * Therefore, as long as we are working with a port_binding that was
-         * inserted into the southbound database by northd, we can always
-         * safely extract pb->mac[0] since it will be non-NULL.
-         *
-         * However, if a port_binding was inserted by someone else, then we
-         * need to double-check our assumption first.
-         */
-        if (pb->n_mac != 1) {
-            static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
-            VLOG_ERR_RL(&rl, "Port binding "UUID_FMT" has %"PRIuSIZE" MACs "
-                        "instead of 1", UUID_ARGS(&pb->header_.uuid),
-                        pb->n_mac);
-            continue;
-        }
-        struct lport_addresses c_addrs;
-        if (!extract_lsp_addresses(pb->mac[0], &c_addrs)) {
-            continue;
-        }
-
-        pfd = shash_find_data(&ipv6_prefixd, pb->logical_port);
-        if (!pfd) {
-            pfd = xzalloc(sizeof *pfd);
-            pfd->ipv6_addr = ipv6_addr;
-            pfd->ea = ea;
-            pfd->cmac = c_addrs.ea;
-            pfd->metadata = dp_tunnel_key;
-            pfd->port_key = tunnel_key;
-            shash_add(&ipv6_prefixd, pb->logical_port, pfd);
-            pfd->next_announce = time_msec() +
-                                 random_range(IPV6_PREFIXD_TIMEOUT);
-            changed = true;
-
-            char prefix_s[IPV6_SCAN_LEN + 6];
-            const char *ipv6_pd_list = smap_get(&pb->options,
-                                                "ipv6_ra_pd_list");
-            if (!ipv6_pd_list ||
-                !ovs_scan(ipv6_pd_list, "%u:"IPV6_SCAN_FMT"/%d",
-                          &pfd->aid, prefix_s, &pfd->plen) ||
-                !ipv6_parse(prefix_s, &pfd->prefix)) {
-                pfd->prefix = in6addr_any;
-            }
-        } else if (pfd->state == PREFIX_PENDING && ovnsb_idl_txn) {
-            char prefix_str[INET6_ADDRSTRLEN + 1] = {0};
-            if (!ipv6_string_mapped(prefix_str, &pfd->prefix)) {
-                goto out;
-            }
-            static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(20, 40);
-            VLOG_DBG_RL(&rl, "updating port_binding for %s with prefix %s/%d"
-                        " aid %d", pb->logical_port, prefix_str, pfd->plen,
-                        pfd->aid);
-
-            pfd->state = PREFIX_DONE;
-            pfd->last_complete = time_msec();
-            pfd->next_announce = pfd->last_complete + pfd->t1;
-            struct smap options;
-            smap_clone(&options, &pb->options);
-            smap_remove(&options, "ipv6_ra_pd_list");
-            smap_add_format(&options, "ipv6_ra_pd_list", "%d:%s/%d",
-                            pfd->aid, prefix_str, pfd->plen);
-            sbrec_port_binding_set_options(pb, &options);
-            smap_destroy(&options);
-        }
-out:
-        pfd->last_used = time_msec();
-        destroy_lport_addresses(&c_addrs);
+        n_ipv6_prefix_ports++;
     }
+
+    /* To reach this point, the port binding must be a logical router
+     * port. LRPs are configured with a single MAC that is always non-NULL.
+     * Therefore, as long as we are working with a port_binding that was
+     * inserted into the southbound database by northd, we can always
+     * safely extract gwp->mac[0] since it will be non-NULL.
+     *
+     * However, if a port_binding was inserted by someone else, then we
+     * need to double-check our assumption first.
+     */
+    if (gwp->n_mac != 1) {
+        static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
+        VLOG_ERR_RL(&rl, "Port binding "UUID_FMT" has %"PRIuSIZE" MACs "
+                    "instead of 1", UUID_ARGS(&gwp->header_.uuid),
+                    gwp->n_mac);
+        continue;
+    }
+
+    pfd = shash_find_data(&ipv6_prefixd, gwp->logical_port);
+    if (!pfd) {
+        pfd = xzalloc(sizeof *pfd);
+        pfd->ipv6_addr = ipv6_addr;
+        pfd->ea = ea;
+        pfd->cmac = ea;
+        pfd->metadata = dp_tunnel_key;
+        pfd->port_key = tunnel_key;
+        shash_add(&ipv6_prefixd, gwp->logical_port, pfd);
+        pfd->next_announce = time_msec() +
+                             random_range(IPV6_PREFIXD_TIMEOUT);
+        pfd->plen = n_ipv6_prefix_ports == 1 ? 64 : 64 - n_ipv6_prefix_ports;
+        changed = true;
+
+        char prefix_s[IPV6_SCAN_LEN + 6];
+        const char *ipv6_pd_list = smap_get(&gwp->options,
+                                            "ipv6_ra_pd_list");
+        if (!ipv6_pd_list ||
+            !ovs_scan(ipv6_pd_list, "%u:"IPV6_SCAN_FMT"/%d",
+                      &pfd->aid, prefix_s, &pfd->plen) ||
+            !ipv6_parse(prefix_s, &pfd->prefix)) {
+            pfd->prefix = in6addr_any;
+        }
+    } else if (pfd->state == PREFIX_PENDING && ovnsb_idl_txn) {
+        char prefix_str[INET6_ADDRSTRLEN + 1] = {0};
+        if (!ipv6_string_mapped(prefix_str, &pfd->prefix)) {
+            goto out;
+        }
+        static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(20, 40);
+        VLOG_DBG_RL(&rl, "updating port_binding for %s with prefix %s/%d"
+                    " aid %d", gwp->logical_port, prefix_str, pfd->plen,
+                    pfd->aid);
+
+        pfd->state = PREFIX_DONE;
+        pfd->last_complete = time_msec();
+        pfd->next_announce = pfd->last_complete + pfd->t1;
+        struct smap options;
+        smap_clone(&options, &gwp->options);
+        smap_remove(&options, "ipv6_ra_pd_list");
+        smap_add_format(&options, "ipv6_ra_pd_list", "%d:%s/%d",
+                        pfd->aid, prefix_str, pfd->plen);
+        sbrec_port_binding_set_options(pb, &options);
+        smap_destroy(&options);
+    }
+out:
+    pfd->last_used = time_msec();
+    destroy_lport_addresses(&c_addrs);
+    VLOG_INFO("HELLO ld->n_peer_ports=%ld n_ipv6_prefix_ports=%ld",
+              ld->n_peer_ports, n_ipv6_prefix_ports);
 
     return changed;
 }
@@ -1495,7 +1497,7 @@ prepare_ipv6_prefixd(struct ovsdb_idl_txn *ovnsb_idl_txn,
         changed |= fill_ipv6_prefix_state(ovnsb_idl_txn, ld,
                                           ea, ip6_addr,
                                           peer->tunnel_key,
-                                          peer->datapath->tunnel_key);
+                                          peer->datapath->tunnel_key, pb);
     }
 
     SHASH_FOR_EACH_SAFE (iter, &ipv6_prefixd) {

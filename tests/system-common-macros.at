@@ -514,6 +514,8 @@ AT_CHECK([ovn-nbctl get logical_router_port rp-sw0 ipv6_prefix | cut -c3-15], [0
 []
 ])
 
+AT_CHECK([false])
+
 OVS_APP_EXIT_AND_WAIT([ovn-controller])
 
 as ovn-sb
