@@ -1116,9 +1116,7 @@ compose_prefixd_packet(struct dp_packet *b, struct ipv6_prefixd_state *pfd)
     if (pfd->uuid.len) {
         payload += pfd->uuid.len + sizeof(struct dhcpv6_opt_header);
     }
-    if (ipv6_addr_is_set(&pfd->prefix)) {
-        payload += sizeof(struct dhcpv6_opt_ia_prefix);
-    }
+    payload += sizeof(struct dhcpv6_opt_ia_prefix);
 
     eth_compose(b, (struct eth_addr) ETH_ADDR_C(33,33,00,01,00,02), pfd->ea,
                 ETH_TYPE_IPV6, IPV6_HEADER_LEN);
@@ -1170,24 +1168,24 @@ compose_prefixd_packet(struct dp_packet *b, struct ipv6_prefixd_state *pfd)
     ia_pd->opt.code = htons(DHCPV6_OPT_IA_PD);
     int opt_len = sizeof(struct dhcpv6_opt_ia_na) -
                   sizeof(struct dhcpv6_opt_header);
-    if (ipv6_addr_is_set(&pfd->prefix)) {
-        opt_len += sizeof(struct dhcpv6_opt_ia_prefix);
-    }
+    opt_len += sizeof(struct dhcpv6_opt_ia_prefix);
     ia_pd->opt.len = htons(opt_len);
     ia_pd->iaid = htonl(pfd->aid);
     ia_pd->t1 = OVS_BE32_MAX;
     ia_pd->t2 = OVS_BE32_MAX;
+    struct dhcpv6_opt_ia_prefix *ia_prefix =
+        (struct dhcpv6_opt_ia_prefix *)(ia_pd + 1);
+    ia_prefix->opt.code = htons(DHCPV6_OPT_IA_PREFIX);
+    ia_prefix->opt.len = htons(sizeof(struct dhcpv6_opt_ia_prefix) -
+                               sizeof(struct dhcpv6_opt_header));
     if (ipv6_addr_is_set(&pfd->prefix)) {
-        struct dhcpv6_opt_ia_prefix *ia_prefix =
-            (struct dhcpv6_opt_ia_prefix *)(ia_pd + 1);
-        ia_prefix->opt.code = htons(DHCPV6_OPT_IA_PREFIX);
-        ia_prefix->opt.len = htons(sizeof(struct dhcpv6_opt_ia_prefix) -
-                                   sizeof(struct dhcpv6_opt_header));
         ia_prefix->plife_time = OVS_BE32_MAX;
         ia_prefix->vlife_time = OVS_BE32_MAX;
-        ia_prefix->plen = pfd->plen;
         ia_prefix->ipv6 = pfd->prefix;
+    } else {
+        ia_prefix->ipv6 = in6addr_any;
     }
+    ia_prefix->plen = pfd->plen;
 
     uint32_t csum = packet_csum_pseudoheader6(dp_packet_l3(b));
     csum = csum_continue(csum, udp_h, dp_packet_size(b) -
@@ -1345,7 +1343,6 @@ fill_ipv6_prefix_state(struct ovsdb_idl_txn *ovnsb_idl_txn,
 
     for (size_t i = 0; i < ld->n_peer_ports; i++) {
         const struct sbrec_port_binding *pb = ld->peer_ports[i].local;
-        struct ipv6_prefixd_state *pfd;
 
         if (!smap_get_bool(&pb->options, "ipv6_prefix", false)) {
             free(shash_find_and_delete(&ipv6_prefixd, pb->logical_port));
@@ -1368,9 +1365,10 @@ fill_ipv6_prefix_state(struct ovsdb_idl_txn *ovnsb_idl_txn,
         VLOG_ERR_RL(&rl, "Port binding "UUID_FMT" has %"PRIuSIZE" MACs "
                     "instead of 1", UUID_ARGS(&gwp->header_.uuid),
                     gwp->n_mac);
-        continue;
+        return false;
     }
 
+    struct ipv6_prefixd_state *pfd;
     pfd = shash_find_data(&ipv6_prefixd, gwp->logical_port);
     if (!pfd) {
         pfd = xzalloc(sizeof *pfd);
@@ -1382,7 +1380,9 @@ fill_ipv6_prefix_state(struct ovsdb_idl_txn *ovnsb_idl_txn,
         shash_add(&ipv6_prefixd, gwp->logical_port, pfd);
         pfd->next_announce = time_msec() +
                              random_range(IPV6_PREFIXD_TIMEOUT);
-        pfd->plen = n_ipv6_prefix_ports == 1 ? 64 : 64 - n_ipv6_prefix_ports;
+        /* XXX bogus, but gets us started. */
+        pfd->plen = n_ipv6_prefix_ports == 1 ? 64
+                                             : 64 - n_ipv6_prefix_ports;
         changed = true;
 
         char prefix_s[IPV6_SCAN_LEN + 6];
@@ -1412,14 +1412,14 @@ fill_ipv6_prefix_state(struct ovsdb_idl_txn *ovnsb_idl_txn,
         smap_remove(&options, "ipv6_ra_pd_list");
         smap_add_format(&options, "ipv6_ra_pd_list", "%d:%s/%d",
                         pfd->aid, prefix_str, pfd->plen);
-        sbrec_port_binding_set_options(pb, &options);
+        sbrec_port_binding_set_options(gwp, &options);
         smap_destroy(&options);
     }
 out:
     pfd->last_used = time_msec();
-    destroy_lport_addresses(&c_addrs);
-    VLOG_INFO("HELLO ld->n_peer_ports=%ld n_ipv6_prefix_ports=%ld",
-              ld->n_peer_ports, n_ipv6_prefix_ports);
+    VLOG_INFO("HELLO ld->n_peer_ports=%ld n_ipv6_prefix_ports=%ld "
+              "pfd->plen=%ld",
+              ld->n_peer_ports, n_ipv6_prefix_ports, pfd->plen);
 
     return changed;
 }
