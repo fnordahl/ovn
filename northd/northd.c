@@ -2937,6 +2937,37 @@ op_get_name(const struct ovn_port *op)
     return name;
 }
 
+void
+ipv6_addr_incr64(struct in6_addr *a)
+{
+    ovs_be128 *addr6 = (ovs_be128 *) a;
+
+    addr6->be64.hi = htonll(1 + ntohll(addr6->be64.hi));
+}
+
+struct in6_addr
+ipv6_addr_max(const struct in6_addr *base, const struct in6_addr *mask)
+{
+    const ovs_be128 *mask6 = (const ovs_be128 *) mask;
+    struct in6_addr dst = *base;
+    ovs_be128 *addr6 = (ovs_be128 *) &dst;
+
+    addr6->be64.hi |= ~mask6->be64.hi;
+    addr6->be64.lo |= ~mask6->be64.lo;
+
+    return dst;
+}
+
+bool
+ipv6_addr_lt(const struct in6_addr *a, const struct in6_addr *b)
+{
+    const ovs_be128 *a_addr6 = (const ovs_be128 *) a;
+    const ovs_be128 *b_addr6 = (const ovs_be128 *) b;
+
+    return a_addr6->be64.hi <= b_addr6->be64.hi
+           && a_addr6->be64.lo < b_addr6->be64.lo;
+}
+
 static void
 ovn_update_ipv6_prefix(struct hmap *lr_ports)
 {
@@ -2957,6 +2988,37 @@ ovn_update_ipv6_prefix(struct hmap *lr_ports)
             continue;
         }
 
+        VLOG_INFO("HELLO prefix=%s", prefix);
+
+        struct in6_addr in6_prefix;
+        struct in6_addr in6_prefix_last;
+        unsigned int plen;
+        char *error = NULL;
+        error = ipv6_parse_cidr(prefix, &in6_prefix, &plen);
+        if (error) {
+            static struct vlog_rate_limit rl =
+                VLOG_RATE_LIMIT_INIT(5, 1);
+            VLOG_INFO_RL(&rl, "%s: Unable to parse IPv6 prefix: %s",
+                         prefix, error);
+            free(error);
+            continue;
+        }
+
+        struct in6_addr mask = ipv6_create_mask(plen);
+        in6_prefix_last = ipv6_addr_max(&in6_prefix, &mask);
+        struct ds ds_tmp = DS_EMPTY_INITIALIZER;
+        ipv6_format_addr(&in6_prefix, &ds_tmp);
+        VLOG_INFO("HELLO prefix: %s", ds_cstr(&ds_tmp));
+        ds_clear(&ds_tmp);
+        ipv6_format_addr(&in6_prefix_last, &ds_tmp);
+        VLOG_INFO("HELLO prefix last: %s", ds_cstr(&ds_tmp));
+        ds_clear(&ds_tmp);
+        while (ipv6_addr_lt(&in6_prefix, &in6_prefix_last)) {
+            ds_clear(&ds_tmp);
+            ipv6_format_addr(&in6_prefix, &ds_tmp);
+            VLOG_INFO("HELLO next /64: %s", ds_cstr(&ds_tmp));
+            ipv6_addr_incr64(&in6_prefix);
+        }
         if (op->od && op->od->nbr) {
             for (size_t i = 0; i < op->od->nbr->n_ports; i++) {
             }
