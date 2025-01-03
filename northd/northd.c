@@ -2959,6 +2959,16 @@ ipv6_addr_max(const struct in6_addr *base, const struct in6_addr *mask)
 }
 
 bool
+ipv6_addr_gt(const struct in6_addr *a, const struct in6_addr *b)
+{
+    const ovs_be128 *a_addr6 = (const ovs_be128 *) a;
+    const ovs_be128 *b_addr6 = (const ovs_be128 *) b;
+
+    return a_addr6->be64.hi >= b_addr6->be64.hi
+           && a_addr6->be64.lo > b_addr6->be64.lo;
+}
+
+bool
 ipv6_addr_lt(const struct in6_addr *a, const struct in6_addr *b)
 {
     const ovs_be128 *a_addr6 = (const ovs_be128 *) a;
@@ -3013,22 +3023,42 @@ ovn_update_ipv6_prefix(struct hmap *lr_ports)
         ipv6_format_addr(&in6_prefix_last, &ds_tmp);
         VLOG_INFO("HELLO prefix last: %s", ds_cstr(&ds_tmp));
         ds_clear(&ds_tmp);
+#if 0
         while (ipv6_addr_lt(&in6_prefix, &in6_prefix_last)) {
             ds_clear(&ds_tmp);
             ipv6_format_addr(&in6_prefix, &ds_tmp);
             VLOG_INFO("HELLO next /64: %s", ds_cstr(&ds_tmp));
             ipv6_addr_incr64(&in6_prefix);
         }
+#endif
         if (op->od && op->od->nbr) {
             for (size_t i = 0; i < op->od->nbr->n_ports; i++) {
+                struct ds ipv6_prefix = DS_EMPTY_INITIALIZER;
+
+                if (!smap_get_bool(&op->nbrp->options, "prefix", false)) {
+                    continue;
+                }
+
+                if (!ipv6_addr_lt(&in6_prefix, &in6_prefix_last)) {
+                    VLOG_INFO("%s: undersized, unable to assign subnet to %s",
+                              prefix, op->od->nbr->name);
+                    break;
+                }
+
+                ipv6_format_addr(&in6_prefix, &ipv6_prefix);
+                ds_put_cstr(&ipv6_prefix, "/64");
+                const char *prefix_ptr = ds_cstr_ro(&ipv6_prefix);
+                nbrec_logical_router_port_set_ipv6_prefix(
+                    op->od->nbr->ports[i], &prefix_ptr, 1);
+                ds_destroy(&ipv6_prefix);
+
+                ipv6_addr_incr64(&in6_prefix);
             }
             VLOG_INFO("HELLO lrp %s is on %s which has %ld ports.",
                       op->nbrp->name, op->od->nbr->name,
                       op->od->nbr->n_ports);
         }
 
-        const char *prefix_ptr = prefix;
-        nbrec_logical_router_port_set_ipv6_prefix(op->nbrp, &prefix_ptr, 1);
     }
 }
 
